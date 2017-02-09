@@ -1,0 +1,63 @@
+version: '2'
+
+services:
+  miniobackupmanager:
+    image: miniobackupmanager
+    environment:
+      MINIO_SRC_ACCESS_KEY: 6b4535c9d0545e036d5b
+      MINIO_SRC_SECRET_KEY: f50a73124f5699570beb9ad44cd941
+      MINIO_SRC_NAME: minio
+      MINIO_SRC_PORT: 9000
+      MINIO_DST_ACCESS_KEY: 6b4535c9d0545e036d5c
+      MINIO_DST_SECRET_KEY: f50a73124f5699570beb9ad44cd942
+      MINIO_DST_NAME: backup-minio
+      MINIO_DST_PORT: 9500
+      RABBITMQ: backup-queue-rabbitmq
+    build:
+      context: ./MinioBackupManager
+      dockerfile: Dockerfile
+
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ACCESS_KEY: 6b4535c9d0545e036d5b
+      MINIO_SECRET_KEY: f50a73124f5699570beb9ad44cd941
+    command: server /export
+
+  backup-minio:
+    image: minio/minio
+    ports:
+      - "9500:9000"
+    environment:
+      MINIO_ACCESS_KEY: 6b4535c9d0545e036d5c
+      MINIO_SECRET_KEY: f50a73124f5699570beb9ad44cd942
+    command: server /export
+  
+  backup-queue-rabbitmq:
+    image: rabbitmq:latest
+    hostname: backup-queue-rabbitmq
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "SWQOKODSQALRPCLNMEQG"
+    ports:
+        - "5672:5672"
+
+#  kafka-zookeeper:
+#    image: wurstmeister/zookeeper
+#    ports:
+#      - "2181:2181"
+#  kafka:
+#    image: wurstmeister/kafka
+#    ports:
+#      - "9092"
+#    depends_on: 
+#      - kafka-zookeeper
+#    environment:
+#    #guh.... this is annoying
+#      KAFKA_ADVERTISED_HOST_NAME: 192.168.1.20
+#      KAFKA_ZOOKEEPER_CONNECT: kafka-zookeeper:2181
+#    volumes:
+#    #...oooookay? no.
+#      - /var/run/docker.sock:/var/run/docker.sock
+
