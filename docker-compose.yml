@@ -42,22 +42,3 @@ services:
       RABBITMQ_ERLANG_COOKIE: "SWQOKODSQALRPCLNMEQG"
     ports:
         - "5672:5672"
-
-#  kafka-zookeeper:
-#    image: wurstmeister/zookeeper
-#    ports:
-#      - "2181:2181"
-#  kafka:
-#    image: wurstmeister/kafka
-#    ports:
-#      - "9092"
-#    depends_on: 
-#      - kafka-zookeeper
-#    environment:
-#    #guh.... this is annoying
-#      KAFKA_ADVERTISED_HOST_NAME: 192.168.1.20
-#      KAFKA_ZOOKEEPER_CONNECT: kafka-zookeeper:2181
-#    volumes:
-#    #...oooookay? no.
-#      - /var/run/docker.sock:/var/run/docker.sock
-
