@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Amazon.S3;
 using Newtonsoft.Json.Linq;
@@ -22,15 +23,17 @@ namespace MinioBackupManager
 
         private async Task CopyFileToBackup(string bucket, string guid)
         {
+            Console.WriteLine("copying...");
+
             var memStream = new MemoryStream();
-
-            _minioClient.DownloadFileAsync(bucket, guid).CopyTo(memStream);
-
-            await _minioBackupClient.UploadFileAsync(bucket, guid, memStream);
+            Console.WriteLine("downloading");
 
             try
             {
-                await _minioClient.UploadFileAsync(bucket, guid, memStream);
+                _minioClient.DownloadFileAsync(bucket, guid)
+                    .CopyTo(memStream);
+                Console.WriteLine("uploading");
+                await _minioBackupClient.UploadFileAsync(bucket, guid, memStream);
             }
             catch (AmazonS3Exception e)
             {
@@ -68,9 +71,9 @@ namespace MinioBackupManager
                     //only conusme version 1 events that contain a bucketname and a fileguid.
                     if (msgObj.version != 1 || msgObj.bucketname == null || msgObj.fileguid == null) return;
 
-                    Console.WriteLine($"Event received, Beginning to copy ${msgObj.fileguid} from the ${msgObj.bucketname} bucket");
+                    Console.WriteLine($"Event received, Beginning to copy {msgObj.fileguid} from the {msgObj.bucketname} bucket");
 
-                    await CopyFileToBackup(msgObj.bucketname, msgObj.fileguid);
+                    await CopyFileToBackup(msgObj.bucketname.ToString(), msgObj.fileguid.ToString());
 
                     Console.WriteLine($"File has successfully been copied to backup");
 
@@ -83,7 +86,10 @@ namespace MinioBackupManager
                     consumer: consumer);
 
                 Console.WriteLine("Listening...");
-                Console.ReadLine(); //don't exit
+                while (true)
+                {
+                    Thread.Sleep(1000);//keep alive
+                }
             }
         }
     }

@@ -20,61 +20,55 @@ namespace MinioBackupManager
         /// <param name="fileGuid"></param>
         /// <param name="dataStream">the object to save</param>
         /// <returns>the minio id on which the item can be retrieved</returns>
-        public static async Task UploadFileAsync(this AmazonS3Client client, string bucketName, string fileGuid, Stream dataStream)
-    {
-        //var client = GetClient();
-
-        var bucketExist = await AmazonS3Util.DoesS3BucketExistAsync(client, bucketName);
-
-
-        if (!bucketExist)
-            await client.PutBucketAsync(bucketName);
-
-        var putResult = await client.PutObjectAsync(new PutObjectRequest
+        public static async Task UploadFileAsync(this AmazonS3Client client, string bucketName, string fileGuid,
+            Stream dataStream)
         {
-            BucketName = bucketName,
-            Key = fileGuid,
-            InputStream = dataStream
-        });
+            //var client = GetClient();
 
-        var code = putResult.HttpStatusCode;
+            var bucketExist = await AmazonS3Util.DoesS3BucketExistAsync(client, bucketName);
 
-        if (code == HttpStatusCode.OK)
-            return;
 
-        throw new AmazonS3Exception("Upload Error");
-    }
+            if (!bucketExist)
+                await client.PutBucketAsync(bucketName);
 
-    public static Stream DownloadFileAsync(this AmazonS3Client client, string bucketName, string fileGuid)
-    {
-        //var client = GetClient();
-        var obj = client.GetObjectAsync(bucketName, fileGuid).Result;
-        return obj.ResponseStream;
-    }
+            var putResult = await client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucketName,
+                Key = fileGuid,
+                InputStream = dataStream
+            });
 
-    private static AmazonS3Client getClient()
-    {
-        var minioUrl = "http://minio:9000"; //= "http://192.168.1.20:9000/";//todo env var from docker
-        var accessKey = "6b4535c9d0545e036d5b"; //todo env var from docker
-        var secretAccessKey = "f50a73124f5699570beb9ad44cd941"; //todo env var from docker
+            var code = putResult.HttpStatusCode;
 
-        return GetClient(accessKey, secretAccessKey, minioUrl);
-    }
+            if (code == HttpStatusCode.OK)
+                return;
+
+            throw new AmazonS3Exception("Upload Error");
+        }
+
+        public static Stream DownloadFileAsync(this AmazonS3Client client, string bucketName, string fileGuid)
+        {
+            //var client = GetClient();
+            var obj = client.GetObjectAsync(bucketName, fileGuid).Result;
+            return obj.ResponseStream;
+        }
+
 
         public static AmazonS3Client GetClient(string accessKey, string secretAccesKey, string endpoint)
-    {
-        AWSCredentials creds = new BasicAWSCredentials(accessKey, secretAccesKey);
-
-        var config = new AmazonS3Config
         {
-            RegionEndpoint = RegionEndpoint.EUWest1,
-            SignatureVersion = "v4",
-            ForcePathStyle = true, //required for minio
-            ServiceURL = endpoint
-        };
+            AWSCredentials creds = new BasicAWSCredentials(accessKey, secretAccesKey);
 
-        var client = new AmazonS3Client(creds, config);
-        return client;
-    }
+            var config = new AmazonS3Config
+            {
+                RegionEndpoint = RegionEndpoint.EUWest1,
+                SignatureVersion = "v4",
+                ForcePathStyle = true, //required for minio
+                ServiceURL = endpoint
+            };
+
+            var client = new AmazonS3Client(creds, config);
+
+            return client;
+        }
     }
 }

@@ -26,6 +26,8 @@ class Program
         Console.WriteLine("Initializing minio clients");
         var minioClient = MinioService.GetClient(accessKey: srcAccessKey, secretAccesKey: srcSecretKey, endpoint: $"http://{srcName}:{srcPort}");
         var minioBackupClient = MinioService.GetClient(accessKey: dstAccessKey, secretAccesKey: dstSecretKey, endpoint: $"http://{dstName}:{dstPort}");
+        Console.WriteLine($"src = http://{srcName}:{srcPort}");
+        Console.WriteLine($"dst = http://{dstName}:{dstPort}");
 
         Console.WriteLine("Generating backup manager");
         var backupManager = new BackupServiceManager(minioClient, minioBackupClient);
