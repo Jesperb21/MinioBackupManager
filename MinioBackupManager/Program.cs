@@ -8,6 +8,8 @@ class Program
         Console.WriteLine("Initializing backup manager");
         Console.WriteLine("Getting environment configurations");
 
+        #region get minio settings from env
+
         var srcName = Environment.GetEnvironmentVariable("MINIO_SRC_NAME");
         var srcPort = Environment.GetEnvironmentVariable("MINIO_SRC_PORT");
         var srcAccessKey = Environment.GetEnvironmentVariable("MINIO_SRC_ACCESS_KEY");
@@ -17,6 +19,8 @@ class Program
         var dstPort = Environment.GetEnvironmentVariable("MINIO_DST_PORT");
         var dstAccessKey = Environment.GetEnvironmentVariable("MINIO_DST_ACCESS_KEY");
         var dstSecretKey = Environment.GetEnvironmentVariable("MINIO_DST_SECRET_KEY");
+
+        #endregion
 
         var rabbitMqHostname = Environment.GetEnvironmentVariable("RABBITMQ");
 

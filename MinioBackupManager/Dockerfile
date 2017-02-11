@@ -1,4 +1,4 @@
-FROM microsoft/dotnet:1.0-runtime
+FROM microsoft/dotnet:1.1-runtime
 ARG source
 WORKDIR /app
 COPY ${source:-obj/Docker/publish} .

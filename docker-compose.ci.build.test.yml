@@ -1,0 +1,31 @@
+version: '2'
+
+services:
+  ci-test:
+    image: microsoft/aspnetcore-build:latest
+    environment: 
+      MINIO_SRC_ACCESS_KEY: 6b4535c9d0545e036d5b
+      MINIO_SRC_SECRET_KEY: f50a73124f5699570beb9ad44cd941
+      MINIO_SRC_NAME: minio
+      MINIO_SRC_PORT: 9000
+      MINIO_DST_ACCESS_KEY: 6b4535c9d0545e036d5c
+      MINIO_DST_SECRET_KEY: f50a73124f5699570beb9ad44cd942
+      MINIO_DST_NAME: backup-minio
+      MINIO_DST_PORT: 9500
+      RABBITMQ: backup-queue-rabbitmq
+    volumes:
+      - .:/src
+    working_dir: /src/Tests/XUnitTests
+    command: /bin/bash -c "dotnet restore && dotnet build && dotnet test"
+  minio:
+    extends:
+      service: minio
+      file: docker-compose.yml
+  backup-minio:
+    extends:
+      service: backup-minio
+      file: docker-compose.yml
+  backup-queue-rabbitmq:
+    extends:      
+      service: backup-queue-rabbitmq
+      file: docker-compose.yml
