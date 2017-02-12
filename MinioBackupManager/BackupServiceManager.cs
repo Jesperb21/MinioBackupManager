@@ -12,33 +12,37 @@ namespace MinioBackupManager
 {
     public class BackupServiceManager
     {
-        private readonly AmazonS3Client _minioClient;
-        private readonly AmazonS3Client _minioBackupClient;
+        private readonly IMinioService _minioService;
+        private readonly MinioSettings _minioClientSettings;
+        private readonly MinioSettings _minioBackupClientSettings;
 
-        public BackupServiceManager(AmazonS3Client minioClient, AmazonS3Client minioBackupClient)
+        public BackupServiceManager(IMinioService minioService, MinioSettings minioClientSettings, MinioSettings minioBackupClientSettings)
         {
-            _minioClient = minioClient;
-            _minioBackupClient = minioBackupClient;
+            _minioService = minioService;
+            _minioClientSettings = minioClientSettings;
+            _minioBackupClientSettings = minioBackupClientSettings;
         }
 
         private async Task CopyFileToBackup(string bucket, string guid)
         {
-            Console.WriteLine("copying...");
-
-            var memStream = new MemoryStream();
-            Console.WriteLine("downloading");
-
+            Console.WriteLine($"copying file {guid} from bucket {bucket}");
             try
             {
-                _minioClient.DownloadFileAsync(bucket, guid)
-                    .CopyTo(memStream);
-                Console.WriteLine("uploading");
-                await _minioBackupClient.UploadFileAsync(bucket, guid, memStream);
+                Console.WriteLine("downloading");
+                var datastream = _minioService.DownloadFile(_minioClientSettings, bucket, guid);
+
+                using (var memStream = new MemoryStream())
+                {
+                    datastream.CopyTo(memStream); //should be copied to a file instead?
+
+                    Console.WriteLine("uploading");
+
+                    await _minioService.UploadFileAsync(_minioBackupClientSettings, bucket, guid, memStream);
+                }
             }
             catch (AmazonS3Exception e)
             {
-                await Console.Out.WriteLineAsync(
-                    $"an error occured while backing up file {guid} to bucket {bucket} error message: {e.Message}");
+                await Console.Out.WriteLineAsync($"an error occured while backing up file {guid} to bucket {bucket} error message: {e.Message}");
             }
         }
 
@@ -91,6 +95,8 @@ namespace MinioBackupManager
                     Thread.Sleep(1000);//keep alive
                 }
             }
+
+            // ReSharper disable once FunctionNeverReturns
         }
     }
 }

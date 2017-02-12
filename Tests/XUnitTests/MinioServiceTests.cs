@@ -4,16 +4,20 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
+using Amazon;
+using Amazon.Runtime;
 using Amazon.S3;
 using MinioBackupManager;
 using Xunit;
 
 namespace XUnitTests
 {
+    [Collection("minio tests")]
     public class MinioServiceTests : IDisposable
     {
-        private AmazonS3Client Minio { get; }
-        private AmazonS3Client BackupMinio { get; }
+        private MinioSettings MinioSettings { get; }
+        private MinioSettings BackupMinioSettings { get; }
+        private IMinioService MinioService { get; }
 
 
         /// <summary>
@@ -28,19 +32,22 @@ namespace XUnitTests
             var srcAccessKey = Environment.GetEnvironmentVariable("MINIO_SRC_ACCESS_KEY");
             var srcSecretKey = Environment.GetEnvironmentVariable("MINIO_SRC_SECRET_KEY");
 
+            MinioSettings = new MinioSettings() { Endpoint = $"http://{srcName}:{srcPort}", AccessKey = srcAccessKey, SecretKey = srcSecretKey };
+
             var dstName = Environment.GetEnvironmentVariable("MINIO_DST_NAME");
             var dstPort = Environment.GetEnvironmentVariable("MINIO_DST_PORT");
             var dstAccessKey = Environment.GetEnvironmentVariable("MINIO_DST_ACCESS_KEY");
             var dstSecretKey = Environment.GetEnvironmentVariable("MINIO_DST_SECRET_KEY");
 
+            BackupMinioSettings = new MinioSettings() { Endpoint = $"http://{dstName}:{dstPort}", AccessKey = dstAccessKey, SecretKey = dstSecretKey };
+
             #endregion
 
-            Minio = MinioService.GetClient(accessKey: srcAccessKey, secretAccesKey: srcSecretKey, endpoint: $"http://{srcName}:{srcPort}");
-            BackupMinio = MinioService.GetClient(accessKey: dstAccessKey, secretAccesKey: dstSecretKey, endpoint: $"http://{dstName}:{dstPort}");
+            MinioService = new MinioService();
 
             //remove all buckets before tests to avoid the default bucket "Docker" on the minio docker image interferes with tests
-            NukeBuckets(Minio);
-            NukeBuckets(BackupMinio);
+            NukeBuckets(MinioSettings);
+            NukeBuckets(BackupMinioSettings);
         }
 
 
@@ -55,17 +62,17 @@ namespace XUnitTests
             for (var i = 0; i < 10; i++)
             {
                 var bucketName = Guid.NewGuid().ToString();
-                tasks.Add(Task.Run(() => Minio.PutBucketAsync(bucketName)));
+                tasks.Add(Task.Run(() => GetClient(MinioSettings).PutBucketAsync(bucketName)));
             }
             Task.WaitAll(tasks.ToArray());
 
-            Assert.Equal(10, Minio.ListBucketsAsync().Result.Buckets.Count);
+            Assert.Equal(10, GetClient(MinioSettings).ListBucketsAsync().Result.Buckets.Count);
 
             //act
-            NukeBuckets(Minio);
+            NukeBuckets(MinioSettings);
 
             //assert
-            Assert.Equal(0, Minio.ListBucketsAsync().Result.Buckets.Count);
+            Assert.Equal(0, GetClient(MinioSettings).ListBucketsAsync().Result.Buckets.Count);
 
         }
         [Fact]
@@ -77,17 +84,17 @@ namespace XUnitTests
             for (var i = 0; i < 10; i++)
             {
                 var bucketName = Guid.NewGuid().ToString();
-                tasks.Add(Task.Run(() => BackupMinio.PutBucketAsync(bucketName)));
+                tasks.Add(Task.Run(() => GetClient(BackupMinioSettings).PutBucketAsync(bucketName)));
             }
             Task.WaitAll(tasks.ToArray());
 
-            Assert.Equal(10, BackupMinio.ListBucketsAsync().Result.Buckets.Count);
+            Assert.Equal(10, GetClient(BackupMinioSettings).ListBucketsAsync().Result.Buckets.Count);
 
             //act
-            NukeBuckets(BackupMinio);
+            NukeBuckets(BackupMinioSettings);
 
             //assert
-            Assert.Equal(0, BackupMinio.ListBucketsAsync().Result.Buckets.Count);
+            Assert.Equal(0, GetClient(BackupMinioSettings).ListBucketsAsync().Result.Buckets.Count);
 
         }
 
@@ -98,14 +105,14 @@ namespace XUnitTests
         [Fact]
         public void Minio_WithoutDoingAnything_ShouldntHaveAnyBuckets()
         {
-            var countOfBuckets = Minio.ListBucketsAsync().Result.Buckets.Count;
+            var countOfBuckets = GetClient(MinioSettings).ListBucketsAsync().Result.Buckets.Count;
             Assert.Equal(0, countOfBuckets);
         }
 
         [Fact]
         public void BackupMinio_WithoutDoingAnything_ShouldntHaveAnyBuckets()
         {
-            var countOfBuckets = BackupMinio.ListBucketsAsync().Result.Buckets.Count;
+            var countOfBuckets = GetClient(BackupMinioSettings).ListBucketsAsync().Result.Buckets.Count;
             Assert.Equal(0, countOfBuckets);
         }
 
@@ -123,7 +130,7 @@ namespace XUnitTests
             var fileGuid = Guid.NewGuid().ToString();
 
             //act
-            Task.WaitAll(Task.Run(() => Minio.UploadFileAsync(bucketName, fileGuid, memStream)));
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(MinioSettings, bucketName, fileGuid, memStream)));
             //assert
 
         }
@@ -138,7 +145,7 @@ namespace XUnitTests
             var fileGuid = Guid.NewGuid().ToString();
 
             //act
-            Task.WaitAll(Task.Run(() => BackupMinio.UploadFileAsync(bucketName, fileGuid, memStream)));
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(BackupMinioSettings, bucketName, fileGuid, memStream)));
             //assert
 
         }
@@ -151,8 +158,8 @@ namespace XUnitTests
         public void Minio_UploadingTwoFilesToTheSameBucket_ActuallyUploadsTwoFilesToTheBucket()
         {
             //arrange
-            var obj1 = Encoding.UTF8.GetBytes("SomeString");
-            var obj2 = Encoding.UTF8.GetBytes("SomeOtherString");
+            var obj1 = Encoding.UTF8.GetBytes(Guid.NewGuid().ToString());
+            var obj2 = Encoding.UTF8.GetBytes(Guid.NewGuid().ToString());
             var memStream1 = new MemoryStream(obj1);
             var memStream2 = new MemoryStream(obj2);
             var bucketName = Guid.NewGuid().ToString();
@@ -160,20 +167,20 @@ namespace XUnitTests
             var fileGuid2 = Guid.NewGuid().ToString();
 
             //act
-            Task.WaitAll(Task.Run(() => Minio.UploadFileAsync(bucketName, fileGuid1, memStream1)));
-            Task.WaitAll(Task.Run(() => Minio.UploadFileAsync(bucketName, fileGuid2, memStream2)));
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(MinioSettings, bucketName, fileGuid1, memStream1)));
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(MinioSettings, bucketName, fileGuid2, memStream2)));
 
 
             //assert
-            Assert.Equal(2, Minio.ListObjectsAsync(bucketName).Result.S3Objects.Count);
+            Assert.Equal(2, GetClient(MinioSettings).ListObjectsAsync(bucketName).Result.S3Objects.Count);
         }
 
         [Fact]
         public void BackupMinio_UploadingTwoFilesToTheSameBucket_ActuallyUploadsTwoFilesToTheBucket()
         {
             //arrange
-            var obj1 = Encoding.UTF8.GetBytes("SomeString");
-            var obj2 = Encoding.UTF8.GetBytes("SomeOtherString");
+            var obj1 = Encoding.UTF8.GetBytes(Guid.NewGuid().ToString());
+            var obj2 = Encoding.UTF8.GetBytes(Guid.NewGuid().ToString());
             var memStream1 = new MemoryStream(obj1);
             var memStream2 = new MemoryStream(obj2);
             var bucketName = Guid.NewGuid().ToString();
@@ -181,12 +188,12 @@ namespace XUnitTests
             var fileGuid2 = Guid.NewGuid().ToString();
 
             //act
-            Task.WaitAll(Task.Run(() => BackupMinio.UploadFileAsync(bucketName, fileGuid1, memStream1)));
-            Task.WaitAll(Task.Run(() => BackupMinio.UploadFileAsync(bucketName, fileGuid2, memStream2)));
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(BackupMinioSettings, bucketName, fileGuid1, memStream1)));
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(BackupMinioSettings, bucketName, fileGuid2, memStream2)));
 
 
             //assert
-            Assert.Equal(2, BackupMinio.ListObjectsAsync(bucketName).Result.S3Objects.Count);
+            Assert.Equal(2, GetClient(BackupMinioSettings).ListObjectsAsync(bucketName).Result.S3Objects.Count);
         }
 
         #endregion
@@ -203,8 +210,8 @@ namespace XUnitTests
             var fileGuid = Guid.NewGuid().ToString();
 
             //act
-            Task.WaitAll(Task.Run(() => Minio.UploadFileAsync(bucketName, fileGuid, memStream)));
-            var objStream = Minio.DownloadFileAsync(bucketName, fileGuid);
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(MinioSettings, bucketName, fileGuid, memStream)));
+            var objStream = MinioService.DownloadFile(MinioSettings, bucketName, fileGuid);
 
             //assert
             var ms = new MemoryStream();
@@ -223,8 +230,8 @@ namespace XUnitTests
             var fileGuid = Guid.NewGuid().ToString();
 
             //act
-            Task.WaitAll(Task.Run(() => BackupMinio.UploadFileAsync(bucketName, fileGuid, memStream)));
-            var objStream = BackupMinio.DownloadFileAsync(bucketName, fileGuid);
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(BackupMinioSettings, bucketName, fileGuid, memStream)));
+            var objStream = MinioService.DownloadFile(BackupMinioSettings, bucketName, fileGuid);
 
             //assert
             var ms = new MemoryStream();
@@ -235,13 +242,14 @@ namespace XUnitTests
         #endregion
 
 
-
         /// <summary>
         /// removes all buckets and its items from a minio
         /// </summary>
-        /// <param name="minio">minio to be nuked</param>
-        private static void NukeBuckets(IAmazonS3 minio)
+        /// <param name="minioSettings">settings for the minio to be nuked</param>
+        private static void NukeBuckets(MinioSettings minioSettings)
         {
+            var minio = GetClient(minioSettings);
+
             minio.ListBucketsAsync().Result.Buckets.ForEach(bucket =>
             {
                 minio.ListObjectsAsync(bucket.BucketName)
@@ -253,6 +261,25 @@ namespace XUnitTests
                 var deleteBucketResponse = minio.DeleteBucketAsync(bucket.BucketName).Result;
                 Assert.Equal(HttpStatusCode.NoContent, deleteBucketResponse.HttpStatusCode);
             });
+
+
+        }
+
+        private static AmazonS3Client GetClient(MinioSettings clientSettings)
+        {
+            AWSCredentials creds = new BasicAWSCredentials(clientSettings.AccessKey, clientSettings.SecretKey);
+
+            var config = new AmazonS3Config
+            {
+                RegionEndpoint = RegionEndpoint.EUWest1,
+                SignatureVersion = "v4",
+                ForcePathStyle = true, //required for minio
+                ServiceURL = clientSettings.Endpoint
+            };
+
+            var client = new AmazonS3Client(creds, config);
+
+            return client;
         }
 
         /// <summary>
@@ -261,8 +288,8 @@ namespace XUnitTests
         /// </summary>
         public void Dispose()
         {
-            NukeBuckets(Minio);
-            NukeBuckets(BackupMinio);
+            NukeBuckets(MinioSettings);
+            NukeBuckets(BackupMinioSettings);
 
         }
     }

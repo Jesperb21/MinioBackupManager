@@ -4,20 +4,24 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Amazon;
+using Amazon.Runtime;
 using Amazon.S3;
 using MinioBackupManager;
 using Newtonsoft.Json;
 using RabbitMQ.Client;
 using Xunit;
+using Xunit.Sdk;
 
 namespace XUnitTests
 {
+    [Collection("minio tests")]
     public class BackupServiceManagerTests : IDisposable
     {
-        private AmazonS3Client Minio { get; }
-        private AmazonS3Client BackupMinio { get; }
-        private BackupServiceManager backupManager { get; }
-
+        private MinioSettings MinioSettings { get; }
+        private MinioSettings BackupMinioSettings { get; }
+        private BackupServiceManager BackupManager { get; }
+        private IMinioService MinioService { get; }
 
         /// <summary>
         /// Makes a new Minio client & a new BackupMinio client before every test
@@ -31,21 +35,25 @@ namespace XUnitTests
             var srcAccessKey = Environment.GetEnvironmentVariable("MINIO_SRC_ACCESS_KEY");
             var srcSecretKey = Environment.GetEnvironmentVariable("MINIO_SRC_SECRET_KEY");
 
+            MinioSettings = new MinioSettings() { Endpoint = $"http://{srcName}:{srcPort}", AccessKey = srcAccessKey, SecretKey = srcSecretKey};
+
             var dstName = Environment.GetEnvironmentVariable("MINIO_DST_NAME");
             var dstPort = Environment.GetEnvironmentVariable("MINIO_DST_PORT");
             var dstAccessKey = Environment.GetEnvironmentVariable("MINIO_DST_ACCESS_KEY");
             var dstSecretKey = Environment.GetEnvironmentVariable("MINIO_DST_SECRET_KEY");
 
+            BackupMinioSettings = new MinioSettings() {Endpoint = $"http://{dstName}:{dstPort}", AccessKey = dstAccessKey, SecretKey = dstSecretKey};
+
             #endregion
 
-            Minio = MinioService.GetClient(accessKey: srcAccessKey, secretAccesKey: srcSecretKey, endpoint: $"http://{srcName}:{srcPort}");
-            BackupMinio = MinioService.GetClient(accessKey: dstAccessKey, secretAccesKey: dstSecretKey, endpoint: $"http://{dstName}:{dstPort}");
-
-            backupManager = new BackupServiceManager(Minio, BackupMinio);
+            
+            MinioService = new MinioService();
+            
+            BackupManager = new BackupServiceManager(MinioService, MinioSettings, BackupMinioSettings);
             
             //remove all buckets before tests to avoid the default bucket "Docker" on the minio docker image interferes with tests
-            NukeBuckets(Minio);
-            NukeBuckets(BackupMinio);
+            NukeBuckets(MinioSettings);
+            NukeBuckets(BackupMinioSettings);
         }
 
         /// <summary>
@@ -58,8 +66,8 @@ namespace XUnitTests
         public void BackupManager_backsFileUp_correctly()
         {
             //Arrange
-            var bucketname = Guid.NewGuid().ToString();
-            var fileguid = Guid.NewGuid().ToString();
+            const string bucketname = "testbucket"; //Guid.NewGuid().ToString();
+            const string fileguid = "testfile"; //Guid.NewGuid().ToString();
 
             var obj = Encoding.UTF8.GetBytes(Guid.NewGuid().ToString());
             var objSrcStream = new MemoryStream(obj);
@@ -67,11 +75,13 @@ namespace XUnitTests
             var rabbitMqHostname = Environment.GetEnvironmentVariable("RABBITMQ");
             var factory = new ConnectionFactory() { HostName = rabbitMqHostname };
             
-            var subscriberThread = new Thread(() => backupManager.SubscribeToEvents(rabbitMqHostname));
-            subscriberThread.Start();
-            //act
+            var subscriberThread = new Thread(() => BackupManager.SubscribeToEvents(rabbitMqHostname));
 
-            Task.WaitAll(Task.Run(() => Minio.UploadFileAsync(bucketname, fileguid, objSrcStream)));
+            //act
+            Task.WaitAll(Task.Run(() => MinioService.UploadFileAsync(MinioSettings, bucketname, fileguid, objSrcStream)));
+            Assert.Equal(1, GetClient(MinioSettings).ListObjectsAsync(bucketname).Result.S3Objects.Count);
+
+            subscriberThread.Start();
 
             //copied from BackupServiceManager, lovely ain't it?
             using (var connection = factory.CreateConnection())
@@ -86,10 +96,11 @@ namespace XUnitTests
                 channel.BasicQos(0, 1, false);
                 SendBackupRequest(channel, bucketname, fileguid);  //send the backup request
             }
-            Task.WaitAll(Task.Delay(100));
 
+            Thread.Sleep(500); //give it some time to finish the backup stuff
+            
             //download file
-            var objStream = BackupMinio.DownloadFileAsync(bucketname, fileguid);
+            var objStream = MinioService.DownloadFile(BackupMinioSettings, bucketname, fileguid);
 
             //assert
             var ms = new MemoryStream();
@@ -124,19 +135,28 @@ namespace XUnitTests
             var msgString = JsonConvert.SerializeObject(msgObj);
             PublishEvent(channel, msgString);
         }
+
         private class FileRequestObject
         {
+            // ReSharper disable once InconsistentNaming
+            // ReSharper disable once UnusedAutoPropertyAccessor.Local
             public int version { get; set; }
+            // ReSharper disable once InconsistentNaming
+            // ReSharper disable once UnusedAutoPropertyAccessor.Local
             public string bucketname { get; set; }
+            // ReSharper disable once InconsistentNaming
+            // ReSharper disable once UnusedAutoPropertyAccessor.Local
             public string fileguid { get; set; }
         }
 
         /// <summary>
         /// removes all buckets and its items from a minio
         /// </summary>
-        /// <param name="minio">minio to be nuked</param>
-        private static void NukeBuckets(IAmazonS3 minio)
+        /// <param name="minioSettings">settings for the minio to be nuked</param>
+        private static void NukeBuckets(MinioSettings minioSettings)
         {
+            var minio = GetClient(minioSettings);
+
             minio.ListBucketsAsync().Result.Buckets.ForEach(bucket =>
             {
                 minio.ListObjectsAsync(bucket.BucketName)
@@ -150,6 +170,23 @@ namespace XUnitTests
             });
         }
 
+        private static AmazonS3Client GetClient(MinioSettings clientSettings)
+        {
+            AWSCredentials creds = new BasicAWSCredentials(clientSettings.AccessKey, clientSettings.SecretKey);
+
+            var config = new AmazonS3Config
+            {
+                RegionEndpoint = RegionEndpoint.EUWest1,
+                SignatureVersion = "v4",
+                ForcePathStyle = true, //required for minio
+                ServiceURL = clientSettings.Endpoint
+            };
+
+            var client = new AmazonS3Client(creds, config);
+
+            return client;
+        }
+
         #endregion
 
 
@@ -159,8 +196,8 @@ namespace XUnitTests
         /// </summary>
         public void Dispose()
         {
-            NukeBuckets(Minio);
-            NukeBuckets(BackupMinio);
+            NukeBuckets(MinioSettings);
+            NukeBuckets(BackupMinioSettings);
         }
 
     }
